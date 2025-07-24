@@ -167,7 +167,7 @@ for(f in 1:nfire){
                                            models = models, matdim = 25, extension = 1)$MPMmat
 }
 
-
+# making a change
 # saveRDS(IPM_fire, "IPM_fire.Rds")
 
 
