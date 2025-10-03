@@ -36,16 +36,22 @@ erycun.survival <- readRDS("erycun.survival.rds")
 erycun.growth <- readRDS("erycun.growth.rds")
 erycun.flw_status <- readRDS("erycun.flw_status.rds")
 erycun.flw_stem <- readRDS("erycun.flw_stem.rds")
-erycun.flw_head <- readRDS("erycun.flw_head.rds")
+# erycun.flw_head <- readRDS("erycun.flw_head.rds")
 
+# pulling out just the posterior means for each parameter
+surv_par <- as.data.frame(erycun.survival) %>% summarize(across(everything(), ~mean(.x)))
+grow_par <- as.data.frame(erycun.growth) %>% summarize(across(everything(), ~mean(.x)))
+flw_par <- as.data.frame(erycun.flw_status) %>% summarize(across(everything(), ~mean(.x)))
+flw_stem_par <- as.data.frame(erycun.flw_stem) %>% summarize(across(everything(), ~mean(.x)))
 
 ####################################################################################
 ###### sourcing in the MPM functions script ####################################
 ####################################################################################
-source("Analyses/Population_Model_Analysis/MPM_functions.R")
+source("Analyses/Population_Model_Analysis/MPM_functions_for_JennaBaljunas.R")
 
 # calculating max size
-ERYCUN_covariates <- read.csv("ERYCUN_covariates.csv")
+# source(paste0(getwd(),"/Analyses/data_processing.R"))
+ERYCUN_covariates <- read_csv("ERYCUN_covariates.csv")
 
 ERYCUN <- ERYCUN_covariates %>% 
   mutate(log_size.t = log(ros_diameter.t),
@@ -118,7 +124,7 @@ elev.df <- read_xlsx(path = "~/Dropbox/UofMiami/Experiment Set up/firehistory_th
 
 preddata_fire <- as_tibble(expand.grid(bald = NA, 
                              year.t1 = NA,
-                             time_since_fire = seq(from = min(fire_summary$time_since_fire, na.rm = T), to = max(fire_summary$time_since_fire, na.rm = T), length = 10),
+                             time_since_fire = seq(from = min(fire_summary$time_since_fire, na.rm = T), to = max(fire_summary$time_since_fire, na.rm = T), length = 6),
                              rel_elev = mean(elev.df$rel_elev, na.rm = T),
                              total_seeds=1) )
 
@@ -138,13 +144,16 @@ preddata_elev <- as_tibble(expand.grid(bald = NA,
 models <- make_mods(grow = erycun.growth, surv = erycun.survival, flw = erycun.flw_status, fert = erycun.flw_stem, 
                     seeds_per_stem = 183, seed_mortality = .3, seed_germ1 = 0, seed_germ2 = .005,
                     seedling_surv = erycun.survival, seedling_size = erycun.growth)
-params <- make_params(bald.rfx = F, year.rfx = F, year = NA, 
-                      microbe = 0, 
-                      preddata = preddata_fire[1,],
-                      germ_microbe = 0,
-                      grow_microbe = 0,
-                      flw_microbe = 0,
-                      size_bounds = size_bounds_df)
+# params <- make_params(bald.rfx = F, bald = NA, year.rfx = F, year = NA, 
+#                       post_draws = 1,
+#                       iter = 1,
+#                       preddata = preddata, 
+#                       microbe = 0,  # 0 is alive, and 1 is sterile becuase we start with the microbes in the model, but then could choose to turn off the microbes
+#                       surv_par = surv_par,
+#                       grow_par = grow_par, 
+#                       flw_par = flw_par,
+#                       fert_par = flw_stem_par,
+#                       size_bounds = size_bounds_df)
 
 # gxy(0,0,models, params)
 # 
@@ -153,44 +162,116 @@ params <- make_params(bald.rfx = F, year.rfx = F, year = NA,
 # 
 
 
-# we can calculate lambda, but we might also consider later looking at effects of predators on quantities like the stable stage distribution etc.
+# we can calculate lambda, but we might also consider later looking at effects of microbes on quantities like the stable stage distribution etc.
 nfire <- nrow(preddata_fire)
 
-IPM_fire <- list()
+# Currently, I pulled the parameters as the posterior mean, but we could do this instead by taking say 500 draws of each posterior to incorporate uncertainty.
+ndraws <- 1
+post_draws <- 1#sample.int(7500,size=ndraws) # The models except for seedling growth have 7500 iterations. That one has more (15000 iterations) to help it converge.
 
-# The model is set up to calculate the posterior means, but we could re-write to incorporate the uncertainty in the vital rate estimates
+
+IPM_fire_iter <- list(NA)
+IPM_fire <- list(NA)
+# lambda_fire <- array(NA, dim = c(ndraws, nfire))
+# the model is now set up to use the p
+
 for(f in 1:nfire){
-    IPM_fire[[f]] <- bigmatrix(params = make_params(bald.rfx = F, year.rfx = F, year = NA, 
-                                                           preddata = preddata_fire[f,], 
-                                                           microbe = 0,  # 0 is default alive soil microbiome, and 1 is sterile becuase we start with the microbes in the model, but then could choose to turn off the microbes
-                                                           size_bounds = size_bounds_df), 
-                                           models = models, matdim = 25, extension = 1)$MPMmat
+  preddata <- preddata_fire[f,]
+  for(i in 1:ndraws){
+    IPM_fire_iter[[i]] <- bigmatrix(params = make_params(bald.rfx = F, bald = NA, year.rfx = F, year = NA, 
+                                                                     post_draws = post_draws,
+                                                                     iter = i,
+                                                                     preddata = preddata, 
+                                                                     microbe = 0,  # 0 is alive, and 1 is sterile becuase we start with the microbes in the model, but then could choose to turn off the microbes
+                                                                     surv_par = surv_par,
+                                                                     grow_par = grow_par, 
+                                                                     flw_par = flw_par,
+                                                                     fert_par = flw_stem_par,
+                                                                     size_bounds = size_bounds_df), 
+                                                models = models, matdim = 25, extension = 2)$MPMmat
+  }
+  IPM_fire[[f]] <- IPM_fire_iter
+  # print(paste("fire", f))
 }
 
-# making a change
-# saveRDS(IPM_fire, "IPM_fire.Rds")
 
+
+IPM_fire <- unlist(IPM_fire,recursive=F)
+saveRDS(IPM_fire, "IPM_fire.Rds")
 
 # example of calculating lambda from the first matrix, which here represents the lowest level of time since fire
 popbio::lambda(IPM_fire[[1]])
 plot(unlist(lapply(IPM_fire, FUN = popbio::lambda)))
 
+lambda_fire_df <- data.frame(lambda = unlist(lapply(IPM_fire, FUN = popbio::lambda)),
+                          time_since_fire = unique(preddata_fire$time_since_fire))
+
+
+# saveRDS(lambda, "lambda_fire.Rds")
+# lambda_fire <- readRDS("lambda_fire.Rds")
+# dimnames(lambda_fire) <- list(Iter = paste0("iter",1:ndraws), 
+#                          Fire = unique(preddata_fire$time_since_fire))
+# lambda
+
+
+# write_csv(lambda_fire_df, "prelim_fire_lambdas.csv")
+
+# lambda_summary <- lambda_fire_df %>% 
+#   filter(!is.na(lambda)) %>% 
+#   group_by(Bald, Microbe) %>% 
+#   summarize(lambda_mean = mean(lambda),
+#             lambda_97.5 = quantile(lambda, 0.975),
+#             lambda_02.5 = quantile(lambda, 0.025))
+
+ggplot()+
+  geom_hline(aes(yintercept = 1), linetype = "dashed")+
+  geom_jitter(data = lambda_fire_df, aes(x = time_since_fire, y = lambda), width = .05, alpha = .4)+
+  # geom_point(data = lambda_summary, aes(x = Bald, y = lambda_mean, color = Microbe, group = "microbe"), size = 4)+
+  # geom_linerange(data = lambda_summary, aes(x = Bald, ymin = lambda_02.5, ymax = lambda_97.5, color = Microbe), lwd = 1)+
+  # ylim(0,10)+
+  theme_classic()
+
+
+
+# plot(y,sx(y,models,params),xlab="Size",type="l",
+#      ylab="Survival Probability",lwd=12)
+# points(y,apply(bigmatrix(params = params, models = models, matdim = 100, extension = 2)$Tmat,2,sum),col="red",lwd=3,cex=.1,pch=19)
+
+
+
+
+
+
 # now evaluating across elevation
 nelev <- nrow(preddata_elev)
 
+IPM_elev_iter <- list()
 IPM_elev <- list()
 
 # The model is set up to calculate the posterior means, but we could re-write to incorporate the uncertainty in the vital rate estimates
 for(e in 1:nelev){
-  IPM_elev[[e]] <- bigmatrix(params = make_params(bald.rfx = F, year.rfx = F, year = NA, 
-                                                  preddata = preddata_elev[e,], 
-                                                  microbe = 0,  # 0 is default alive soil microbiome, and 1 is sterile becuase we start with the microbes in the model, but then could choose to turn off the microbes
-                                                  size_bounds = size_bounds_df), 
-                             models = models, matdim = 25, extension = 10)$MPMmat
+  preddata <- preddata_elev[e,]
+  for(i in 1:ndraws){
+    IPM_elev_iter[[i]] <- bigmatrix(params = make_params(bald.rfx = F, bald = NA, year.rfx = F, year = NA, 
+                                                    post_draws = post_draws,
+                                                    iter = i,
+                                                    preddata = preddata, 
+                                                    microbe = 0,  # 0 is alive, and 1 is sterile becuase we start with the microbes in the model, but then could choose to turn off the microbes
+                                                    surv_par = surv_par,
+                                                    grow_par = grow_par, 
+                                                    flw_par = flw_par,
+                                                    fert_par = flw_stem_par,
+                                                    size_bounds = size_bounds_df), 
+                               models = models, matdim = 25, extension = 2)$MPMmat
+  }
+  IPM_elev[[e]] <- IPM_elev_iter
+  # print(paste("fire", f))
 }
 
-
 # saveRDS(IPM_elev, "IPM_elev.Rds")
+
+IPM_elev <- unlist(IPM_elev,recursive=F)
+saveRDS(IPM_elev, "IPM_elev.Rds")
 
 
 # example of calculating lambda from the first matrix, which here represents the lowest level of relative elevation. Plotting them across the gradient shows a bit more squiglyness than I expected so I'm not sure what is up with that.
